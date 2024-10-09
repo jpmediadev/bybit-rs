@@ -38,7 +38,7 @@ mod tests {
     async fn test_order_book() {
         let ws: Stream = Bybit::new(None, None);
         let request = Subscription {
-            args: vec!["publicTrade.ADAUSDT"],
+            args: vec!["publicTrade.BTCUSDT", "orderbook.1.BTCUSDT"],
             op: "subscribe",
         };
 
@@ -55,10 +55,13 @@ mod tests {
                                 v.side,
                                 Instant::now().elapsed().as_nanos()
                             );
+
                         }
+
                     }
                     WebsocketEvents::OrderBookEvent(order_book) => {
                         println!("{:#?}", order_book.data);
+
                         // Handle OrderBook event
                     }
                     // Add additional matches for other variants of the WebsocketEvents enum
@@ -103,6 +106,7 @@ mod tests {
         });
         while let Some(data) = rx.recv().await {
             println!("{:#?}", data);
+            break;
         }
     }
 
@@ -116,6 +120,7 @@ mod tests {
         });
         while let Some(data) = rx.recv().await {
             println!("{:#?}", data);
+            break;
         }
     }
 

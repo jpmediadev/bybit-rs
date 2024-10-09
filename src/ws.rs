@@ -469,6 +469,14 @@ impl Stream {
                         ));
                     }
                 }
+                Some(Ok(WsMessage::Ping(b))) => {
+                    stream.send(WsMessage::Pong(b)).await?;
+                }
+                Some(Ok(WsMessage::Close(close_frame))) => {
+                    return Err(BybitError::WebSocketDisconnected(format!("{}", close_frame.unwrap() )));
+
+                }
+
                 Some(Err(e)) => {
                     return Err(BybitError::from(e.to_string()));
                 }

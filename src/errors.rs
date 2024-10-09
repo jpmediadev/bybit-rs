@@ -66,6 +66,9 @@ pub enum BybitError {
     #[error("Unauthorized")]
     Unauthorized,
 
+    #[error("Websocket disconnected")]
+    WebSocketDisconnected(String),
+
     /// StatusCode variant that holds the status code.
     #[error("Status Code")]
     StatusCode(u16),
