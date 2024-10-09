@@ -11,6 +11,7 @@ use crate::util::{build_json_request, generate_random_uid, get_timestamp};
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -106,6 +107,33 @@ impl Stream {
             .wss_connect(endpoint, Some(request), false, None)
             .await?;
         Self::event_loop(response, handler, None).await?;
+        Ok(())
+    }
+
+    pub async fn ws_subscribe_control<'b, F>(
+        &self,
+        req: Subscription<'_>,
+        category: Category,
+        handler: F,
+        should_stop: &AtomicBool
+    ) -> Result<(), BybitError>
+    where
+        F: FnMut(WebsocketEvents) -> Result<(), BybitError> + 'static + Send,
+    {
+        let endpoint = {
+            match category {
+                Category::Linear => WebsocketAPI::PublicLinear,
+                Category::Inverse => WebsocketAPI::PublicInverse,
+                Category::Spot => WebsocketAPI::PublicSpot,
+                _ => unimplemented!("Option has not been implemented"),
+            }
+        };
+        let request = Self::build_subscription(req);
+        let response = self
+            .client
+            .wss_connect(endpoint, Some(request), false, None)
+            .await?;
+        Self::event_loop_control(response, handler, None, should_stop).await?;
         Ok(())
     }
 
@@ -506,6 +534,66 @@ impl Stream {
                 interval = Instant::now();
             }
         }
+    }
+
+    pub async fn event_loop_control<'a, H>(
+        mut stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        mut handler: H,
+        mut order_sender: Option<mpsc::UnboundedReceiver<RequestType<'_>>>,
+        should_stop: &AtomicBool
+    ) -> Result<(), BybitError>
+    where
+        H: WebSocketHandler,
+    {
+        let mut interval = Instant::now();
+        while !should_stop.load(Ordering::Relaxed) {
+            let msg = stream.next().await;
+            match msg {
+                Some(Ok(WsMessage::Text(msg))) => {
+                    if let Err(_) = handler.handle_msg(&msg) {
+                        return Err(BybitError::Base(
+                            "Error handling stream message".to_string(),
+                        ));
+                    }
+                }
+                Some(Ok(WsMessage::Ping(b))) => {
+                    stream.send(WsMessage::Pong(b)).await?;
+                }
+                Some(Ok(WsMessage::Close(close_frame))) => {
+                    return Err(BybitError::WebSocketDisconnected(format!("{}", close_frame.unwrap() )));
+
+                }
+
+                Some(Err(e)) => {
+                    return Err(BybitError::from(e.to_string()));
+                }
+                None => {
+                    return Err(BybitError::Base("Stream was closed".to_string()));
+                }
+                _ => {}
+            }
+            if let Some(sender) = order_sender.as_mut() {
+                if let Some(v) = sender.recv().await {
+                    let order_req = Self::build_trade_subscription(v, Some(3000));
+                    stream.send(WsMessage::Text(order_req)).await?;
+                }
+            }
+
+            if interval.elapsed() > Duration::from_secs(300) {
+                let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
+                if order_sender.is_none() {
+                    parameters.insert("req_id".into(), generate_random_uid(8).into());
+                }
+                parameters.insert("op".into(), "ping".into());
+                let request = build_json_request(&parameters);
+                let _ = stream
+                    .send(WsMessage::Text(request))
+                    .await
+                    .map_err(BybitError::from);
+                interval = Instant::now();
+            }
+        }
+        Ok(())
     }
 }
 
