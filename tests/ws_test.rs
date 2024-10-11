@@ -116,7 +116,7 @@ mod tests {
         let request = vec!["BTCUSDT", "MATICUSDT", "ETHUSDT", "ADAUSDT"];
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
-            ws.ws_trades(request, Category::Linear, tx).await.unwrap();
+            ws.ws_trades(request, Category::Spot, tx).await.unwrap();
         });
         while let Some(data) = rx.recv().await {
             println!("{:#?}", data);

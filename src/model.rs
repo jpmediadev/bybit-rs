@@ -3410,8 +3410,8 @@ pub struct WsTrade {
     pub volume: f64,
     #[serde(rename = "p", with = "string_to_float")]
     pub price: f64,
-    #[serde(rename = "L")]
-    pub tick_direction: String,
+    // #[serde(rename = "L")]
+    // pub tick_direction: String,
     #[serde(rename = "i")]
     pub id: String,
     #[serde(rename = "BT")]
