@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::net::TcpStream;
+use tokio::{select, time};
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 use tokio_tungstenite::WebSocketStream;
@@ -545,52 +546,57 @@ impl Stream {
     where
         H: WebSocketHandler,
     {
-        let mut interval = Instant::now();
+        let (mut write, mut read) = stream.split();
+
+
+        let mut interval = time::interval(Duration::from_secs(15));
         while !should_stop.load(Ordering::Relaxed) {
-            let msg = stream.next().await;
-            match msg {
-                Some(Ok(WsMessage::Text(msg))) => {
-                    if let Err(_) = handler.handle_msg(&msg) {
-                        return Err(BybitError::Base(
-                            "Error handling stream message".to_string(),
-                        ));
+
+
+            select! {
+                 _ = interval.tick() => {
+                   let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
+                    if order_sender.is_none() {
+                        parameters.insert("req_id".into(), generate_random_uid(8).into());
+                    }
+                    parameters.insert("op".into(), "ping".into());
+                    let request = build_json_request(&parameters);
+                    let _ = write
+                        .send(WsMessage::Text(request))
+                        .await
+                        .map_err(BybitError::from);
+                },
+                msg =  read.next() => {
+                    match msg {
+                        Some(Ok(WsMessage::Text(msg))) => {
+                            if let Err(_) = handler.handle_msg(&msg) {
+                                return Err(BybitError::Base(
+                                    "Error handling stream message".to_string(),
+                                ));
+                            }
+                        }
+                        Some(Ok(WsMessage::Ping(b))) => {
+                            write.send(WsMessage::Pong(b)).await?;
+                        }
+                        Some(Ok(WsMessage::Close(close_frame))) => {
+                            return Err(BybitError::WebSocketDisconnected(format!("{}", close_frame.unwrap() )));
+
+                        }
+
+                        Some(Err(e)) => {
+                            return Err(BybitError::from(e.to_string()));
+                        }
+                        None => {
+                            return Err(BybitError::Base("Stream was closed".to_string()));
+                        }
+                        _ => {}
                     }
                 }
-                Some(Ok(WsMessage::Ping(b))) => {
-                    stream.send(WsMessage::Pong(b)).await?;
-                }
-                Some(Ok(WsMessage::Close(close_frame))) => {
-                    return Err(BybitError::WebSocketDisconnected(format!("{}", close_frame.unwrap() )));
 
-                }
-
-                Some(Err(e)) => {
-                    return Err(BybitError::from(e.to_string()));
-                }
-                None => {
-                    return Err(BybitError::Base("Stream was closed".to_string()));
-                }
-                _ => {}
-            }
-            if let Some(sender) = order_sender.as_mut() {
-                if let Some(v) = sender.recv().await {
+                Some(v) = async { order_sender.as_mut().unwrap().recv().await } => {
                     let order_req = Self::build_trade_subscription(v, Some(3000));
-                    stream.send(WsMessage::Text(order_req)).await?;
-                }
-            }
-
-            if interval.elapsed() > Duration::from_secs(300) {
-                let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
-                if order_sender.is_none() {
-                    parameters.insert("req_id".into(), generate_random_uid(8).into());
-                }
-                parameters.insert("op".into(), "ping".into());
-                let request = build_json_request(&parameters);
-                let _ = stream
-                    .send(WsMessage::Text(request))
-                    .await
-                    .map_err(BybitError::from);
-                interval = Instant::now();
+                    write.send(WsMessage::Text(order_req)).await?;
+                 }
             }
         }
         Ok(())
