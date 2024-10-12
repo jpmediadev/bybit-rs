@@ -592,19 +592,6 @@ impl Stream {
                         _ => {}
                     }
                 }
-
-                Some(v) = async {
-                    if let Some(ref mut sender) = order_sender {
-                        sender.recv().await
-                    } else {
-                        None
-                    }
-                } => {
-                    if let Some(v) = v {
-                        let order_req = Self::build_trade_subscription(v, Some(3000));
-                        stream.send(WsMessage::Text(order_req)).await?;
-                    }
-                }
             }
         }
         Ok(())
