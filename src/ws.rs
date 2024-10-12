@@ -593,10 +593,18 @@ impl Stream {
                     }
                 }
 
-                Some(v) = async { order_sender.as_mut().unwrap().recv().await } => {
-                    let order_req = Self::build_trade_subscription(v, Some(3000));
-                    write.send(WsMessage::Text(order_req)).await?;
-                 }
+                Some(v) = async {
+                    if let Some(ref mut sender) = order_sender {
+                        sender.recv().await
+                    } else {
+                        None
+                    }
+                } => {
+                    if let Some(v) = v {
+                        let order_req = Self::build_trade_subscription(v, Some(3000));
+                        stream.send(WsMessage::Text(order_req)).await?;
+                    }
+                }
             }
         }
         Ok(())
